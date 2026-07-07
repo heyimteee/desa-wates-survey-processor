@@ -1,0 +1,12 @@
+# Survey data — user must create their own BAHAN/ folder
+BAHAN/
+
+# Civil registry data — user must create their own BIP/ folder
+BIP/
+
+# Generated output files
+OUTPUT/
+
+# Python cache
+__pycache__/
+*.pyc
