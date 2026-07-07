@@ -1,49 +1,49 @@
-# Desa Wates Micro Data — Survey Processing Tool
+# Desa Wates — Alat Pemroses Data Survei
 
-Processes Desa Wates survey data (INDIVIDU + KELUARGA) using BIP civil registry data to fill demographic gaps, outputting template-formatted Excel files per RT/RW/Dusun group.
+Program ini mengolah data survei Desa Wates (INDIVIDU + KELUARGA) dengan bantuan data BIP (kependudukan) untuk mengisi data yang kosong, lalu menghasilkan file Excel sesuai template per kelompok RT/RW/Dusun.
 
-## Prerequisites
+## Prasyarat
 
 - Python 3.8+
-- `openpyxl` (`pip install openpyxl`)
+- `openpyxl` (install: `pip install openpyxl`)
 
-## Setup
+## Cara Penggunaan
 
-1. **Create `BAHAN/`** — place survey Excel files here. The program recursively searches this folder for files containing `INDIVIDU` or `Keluarga` in the filename. Organize into subfolders as desired.
+1. **Buat folder `BAHAN/`** — masukkan file survei (Excel) ke folder ini. Program akan mencari secara otomatis file yang mengandung kata `INDIVIDU` atau `Keluarga` di namanya. Boleh diorganisir dalam subfolder.
 
-2. **Create `BIP/`** — place civil registry Excel files here. The program reads all `.xlsx` files (skipping `~$` temp files) and indexes them by NIK and KK. The BIP files should have a header row starting with `NO` (auto-detected as row 1 or row 3).
+2. **Buat folder `BIP/`** — masukkan file data kependudukan (Excel) ke folder ini. Program akan membaca semua file `.xlsx` (kecuali file sementara `~$`) dan mengindeksnya berdasarkan NIK dan KK. File BIP harus memiliki baris header yang diawali dengan `NO` (terdeteksi otomatis di baris 1 atau 3).
 
-3. **`TEMPLATES/`** — must contain two template files:
-   - `TEMPLATE_DATA_INDIVIDU.xlsx` — 70-column template for individual output
-   - `TEMPLATE_DATA_KELUARGA.xlsx` — 135-column template for household output
+3. **Folder `TEMPLATES/`** — harus berisi dua file template:
+   - `TEMPLATE_DATA_INDIVIDU.xlsx` — template 70 kolom untuk output per individu
+   - `TEMPLATE_DATA_KELUARGA.xlsx` — template 135 kolom untuk output per keluarga
 
-4. **Run:**
+4. **Jalankan:**
    ```bash
    python3 process.py
    ```
 
-5. **Output** — generated `.xlsx` files appear in `OUTPUT/`, named by location:
+5. **Hasil** — file `.xlsx` akan muncul di folder `OUTPUT/`, diberi nama sesuai lokasi:
    ```
    DATA_INDIVIDU_RT_01_RW_01_DUSUN_SIDOMULYO_DESA_WATES.xlsx
    DATA_KELUARGA_RT_01_RW_05_DUSUN_WATES_DESA_WATES.xlsx
    ```
 
-   A `DATA_ISSUES.xlsx` log records data quality warnings.
+   File `DATA_ISSUES.xlsx` mencatat peringatan kualitas data.
 
-## How It Works
+## Cara Kerja
 
-1. **BIP loading** — loads all civil registry files, deduplicates by NIK, indexes by NIK and KK.
-2. **Survey discovery** — finds INDIVIDU and KELUARGA survey files in `BAHAN/`.
-3. **INDIVIDU pipeline** — looks up each respondent's NIK in BIP to fill demographic gaps (name, gender, birthplace, birthdate, age, religion, KK). Survey data takes priority; BIP is fallback.
-4. **KELUARGA pipeline** — for each surveyed KK, expands to all BIP family members of that KK, attaching the household survey data (housing, facilities, assistance programs) to each individual.
-5. **Output** — writes one file per survey input, enforcing column types (TEXT for IDs, DATE for birthdates, NUMBER for currency, etc.).
+1. **Pemuatan BIP** — membaca semua file kependudukan, menghapus NIK ganda, mengindeks berdasarkan NIK dan KK.
+2. **Penemuan survei** — mencari file survei INDIVIDU dan KELUARGA di folder `BAHAN/`.
+3. **Proses INDIVIDU** — mencocokkan NIK responden dengan data BIP untuk mengisi data kosong (nama, jenis kelamin, tempat lahir, tanggal lahir, usia, agama, KK). Data survei diutamakan; BIP sebagai cadangan.
+4. **Proses KELUARGA** — untuk setiap KK yang disurvei, program mengambil seluruh anggota keluarga dari BIP dan melampirkan data rumah tangga (perumahan, fasilitas, program bantuan) ke setiap individu.
+5. **Output** — menulis satu file per input survei, dengan tipe kolom yang benar (TEXT untuk NIK/KK, DATE untuk tanggal lahir, NUMBER untuk uang, dll).
 
-## Data Rules
+## Aturan Data
 
-- Survey is primary; BIP fills gaps only.
-- Duplicate NIKs/KKs: first occurrence kept.
-- All text is UPPERCASE except email addresses.
-- NIK, KK, phone stored as TEXT type.
-- Empty text fields → `-` (dash). Empty numeric fields → `0`.
-- Default fills: Suku Bangsa → JAWA, Warga Negara → INDONESIA, DI EKSPOR → TIDAK.
-- Sort: KK A→Z, then empty KK, then empty NIK at bottom.
+- Survei adalah data utama; BIP hanya mengisi celah.
+- NIK/KK ganda: hanya yang pertama disimpan.
+- Semua teks menggunakan HURUF BESAR, kecuali alamat email.
+- NIK, KK, nomor HP disimpan sebagai tipe TEXT.
+- Kolom teks kosong → `-` (strip). Kolom angka kosong → `0`.
+- Isian default: Suku Bangsa → JAWA, Warga Negara → INDONESIA, DI EKSPOR → TIDAK.
+- Urutan: KK A→Z, lalu KK kosong, lalu NIK kosong di bagian paling bawah.
