@@ -35,7 +35,7 @@ def main():
 
     # ---- Load BIP pool ----
     print("[1/5] Loading BIP files...")
-    bip_by_nik, bip_by_kk, bip_all, bip_logger = load_bip_pool(BIP_DIR)
+    bip_by_nik, bip_by_kk, bip_all, bip_logger, bip_by_name = load_bip_pool(BIP_DIR)
     print(f"      Loaded {len(bip_all)} BIP records "
           f"({len(bip_by_nik)} unique NIKs, {len(bip_by_kk)} unique KKs)")
 
@@ -84,7 +84,7 @@ def main():
             output_path = os.path.join(OUTPUT_DIR, output_name)
 
             print(f"      File: {fname}")
-            records = process_individu([fpath], bip_by_nik, logger)
+            records = process_individu([fpath], bip_by_nik, bip_by_name, logger)
             print(f"        Output: {len(records)} rows")
             write_individu_output(records, TEMPLATE_INDIVIDU,
                                   output_path, logger)

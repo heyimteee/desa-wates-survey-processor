@@ -56,4 +56,5 @@ PENDIDIKAN_YEARS = {
     "S-1 / SEDERAJAT": 16,
     "S-2 / SEDERAJAT": 18,
     "S-3 / SEDERAJAT": 21,
+    "TIDAK / BELUM SEKOLAH": 0,
 }

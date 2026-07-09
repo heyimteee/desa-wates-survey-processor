@@ -7,7 +7,7 @@ import glob
 import openpyxl
 
 from config import BIP_HEADERS
-from utils import clean_id
+from utils import clean_id, build_bip_name_index
 from logger import IssueLogger
 
 
@@ -32,7 +32,7 @@ def load_bip_pool(bip_dir):
     )
     if not bip_files:
         logger.log("BIP_LOAD", "WARNING", f"No BIP files found in {bip_dir}")
-        return bip_by_nik, bip_by_kk, bip_all, logger
+        return bip_by_nik, bip_by_kk, bip_all, logger, {}
 
     for fpath in bip_files:
         fname = os.path.basename(fpath)
@@ -111,4 +111,5 @@ def load_bip_pool(bip_dir):
     logger.log("BIP_LOAD", "INFO",
                f"Loaded {len(bip_all)} BIP records, "
                f"{len(bip_by_nik)} unique NIKs, {len(bip_by_kk)} unique KKs")
-    return bip_by_nik, bip_by_kk, bip_all, logger
+    bip_by_name = build_bip_name_index(bip_all)
+    return bip_by_nik, bip_by_kk, bip_all, logger, bip_by_name

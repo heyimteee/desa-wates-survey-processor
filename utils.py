@@ -189,18 +189,69 @@ def format_currency(val):
         return None
 
 
-def clean_phone(val):
-    """Clean phone number values, removing Google Forms sentinels."""
+def clean_and_validate_phone(val):
+    """Clean and validate phone number values.
+
+    Returns (result, note) where result is the cleaned value or '-',
+    and note is a validation message or None.
+
+    Rules:
+      - None/empty/sentinel (0,1) -> '-', no note
+      - +62 prefix -> convert to 0 prefix, note
+      - 62 prefix (no +) -> convert to 0 prefix, note
+      - Text/letters in value -> '-', note
+      - Pure punctuation -> '-', note
+      - Single digit -> '-', note
+      - 2-6 digits -> '-', note (too short)
+      - Commas/spaces stripped from digit sequences
+      - Everything else -> digits-only string, no note
+    """
     if val is None:
-        return None
-    if isinstance(val, (int, float)):
+        return "-", None
+
+    if isinstance(val, float):
         if val <= 1:
-            return None
-        return str(int(val))
+            return "-", None
+        if val == int(val):
+            val = int(val)
+
+    if isinstance(val, int):
+        if val <= 1:
+            return "-", None
+        val = str(val)
+
     s = str(val).strip()
     if s == "" or s in ("0", "1", "0.0", "1.0"):
-        return None
-    return s
+        return "-", None
+
+    if re.search(r"[a-zA-Z]", s):
+        return "-", "mengandung teks"
+
+    cleaned = re.sub(r"\.0+$", "", s)
+    cleaned = re.sub(r"[^\d+]", "", cleaned)
+
+    if not cleaned:
+        return "-", "hanya tanda baca"
+
+    if cleaned.startswith("+62") and cleaned[3:].isdigit():
+        return "0" + cleaned[3:], "dikonversi dari +62 ke 08"
+
+    if cleaned.startswith("62") and cleaned[2:].isdigit():
+        return "0" + cleaned[2:], "dikonversi dari 62 ke 08"
+
+    if cleaned.isdigit() and len(cleaned) == 1:
+        return "-", "hanya 1 digit"
+
+    if cleaned.isdigit() and len(cleaned) <= 6:
+        return "-", "terlalu pendek"
+
+    if cleaned.isdigit() and len(set(cleaned)) <= 2 and len(cleaned) >= 7:
+        return cleaned, "pola mencurigakan (digit berulang)"
+
+    if cleaned.isdigit() and not cleaned.startswith("08") and len(cleaned) >= 10:
+        return cleaned, "tidak diawali 08"
+
+    return cleaned, None
 
 
 def clean_email(val):
@@ -261,6 +312,140 @@ def normalize_pendidikan(val):
     return s
 
 
+def name_key(n):
+    """Normalize a name for case-insensitive comparison."""
+    if n is None:
+        return ""
+    return re.sub(r"\s+", " ", str(n).strip()).lower()
+
+
+def is_valid_nik(nik):
+    """Return True if NIK is exactly 16 digits."""
+    if not nik:
+        return False
+    s = str(nik).strip()
+    return len(s) == 16 and s.isdigit()
+
+
+def build_bip_name_index(bip_all):
+    """Index BIP records by normalized name.
+
+    Returns:
+        dict: name_key -> list of BIP record dicts.
+    """
+    idx = {}
+    for rec in bip_all:
+        key = name_key(rec.get("NAMA LENGKAP", ""))
+        if key:
+            idx.setdefault(key, []).append(rec)
+    return idx
+
+
+def repair_nik_by_name(nik_raw, name, rt, rw, bip_by_name, logger):
+    """Attempt to repair an invalid NIK by name matching scoped to RT/RW.
+
+    Returns (repaired_nik, note) or (None, None) if repair failed.
+    """
+    if is_valid_nik(nik_raw):
+        return nik_raw, None
+
+    if not name:
+        return None, None
+
+    candidates = bip_by_name.get(name_key(name), [])
+    if not candidates:
+        return None, None
+
+    rt_str = str(rt).strip().lstrip("0") if rt else None
+    rw_str = str(rw).strip().lstrip("0") if rw else None
+
+    scoped = []
+    for c in candidates:
+        c_rt = str(c.get("NO RT", "")).strip().lstrip("0")
+        c_rw = str(c.get("NO RW", "")).strip().lstrip("0")
+        if rt_str is None or c_rt == rt_str:
+            if rw_str is None or c_rw == rw_str:
+                scoped.append(c)
+
+    if len(scoped) == 1:
+        new_nik = clean_id(scoped[0].get("NIK"))
+        if is_valid_nik(new_nik) and new_nik != nik_raw:
+            return new_nik, "diperbaiki dari '{}'".format(nik_raw)
+
+    if len(scoped) > 1:
+        return None, "nama '{}' cocok dengan {} data BIP di RT {}/RW {}, ambigu".format(
+            name, len(scoped), rt or "?", rw or "?")
+
+    if not scoped and rt is not None:
+        full_candidates = candidates
+        if len(full_candidates) == 1:
+            new_nik = clean_id(full_candidates[0].get("NIK"))
+            if is_valid_nik(new_nik) and new_nik != nik_raw:
+                return new_nik, "diperbaiki dari '{}' (luar RT/RW)".format(nik_raw)
+
+    return None, "nama tidak ditemukan di BIP RT {}/RW {}".format(
+        rt or "?", rw or "?")
+
+
+def classify_nik_duplicate(nik, name_a, name_b, bip_by_nik):
+    """Determine which name a duplicated NIK belongs to in BIP.
+
+    Returns: 'same', 'a_owns', 'b_owns', or 'neither'.
+    """
+    bip_entry = bip_by_nik.get(nik)
+    if not bip_entry:
+        return "neither"
+
+    bip_name = (to_upper(bip_entry.get("NAMA LENGKAP")) or "").strip()
+    a = (name_a or "").strip().upper()
+    b = (name_b or "").strip().upper()
+
+    if bip_name == a == b:
+        return "same"
+    if bip_name == a:
+        return "a_owns"
+    if bip_name == b:
+        return "b_owns"
+    return "neither"
+
+
+def detect_health_anomaly(val):
+    """Detect contradictory or multi-select health values.
+
+    Returns (is_anomaly, anomaly_type, message).
+    """
+    if val is None or isinstance(val, (int, float)):
+        return False, "", ""
+
+    s = str(val).strip()
+    if "," not in s:
+        return False, "", ""
+
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    if len(parts) < 2:
+        return False, "", ""
+
+    has_text = False
+    has_numeric = False
+    numeric_count = 0
+
+    for p in parts:
+        if p.isdigit() or (p.replace(".", "").isdigit()):
+            has_numeric = True
+            numeric_count += 1
+        else:
+            has_text = True
+
+    if has_text and has_numeric:
+        return True, "mixed", "kontradiksi: '{}' (teks + angka)".format(s)
+
+    if has_numeric and numeric_count > 1:
+        return True, "multi_numeric", "multi-select: '{}' ({} angka)".format(
+            s, numeric_count)
+
+    return False, "", ""
+
+
 def derive_pendidikan_years(pendidikan):
     """Derive years of education from pendidikan level."""
     if not pendidikan:
@@ -288,3 +473,38 @@ def derive_pendidikan_years(pendidikan):
     if "S-3" in p or "S3" in p or "STRATA III" in p:
         return 21
     return None
+
+
+def repair_nik_kk_from_bip(kk, bip_by_kk):
+    """Find the correct NIK Kepala Keluarga from BIP for a given KK.
+
+    Looks up the KK in BIP and finds the family member whose SHDK
+    indicates they are the head of household, returning their NIK.
+
+    Returns:
+        (repaired_nik, note) or (None, note) if repair failed.
+    """
+    members = bip_by_kk.get(str(kk), [])
+    if not members:
+        return None, "KK tidak ditemukan di BIP"
+
+    for m in members:
+        shdk = str(m.get("SHDK", "")).strip().upper()
+        if "KEPALA" in shdk:
+            nik = clean_id(m.get("NIK"))
+            if is_valid_nik(nik):
+                return nik, "diperbaiki dari BIP (data kepala keluarga)"
+
+    return None, "tidak ada kepala keluarga di BIP untuk KK ini"
+
+
+def normalize_bantuan(val):
+    """Normalize bantuan value, handling ambiguous YA,TIDAK responses."""
+    s = str(val).strip().upper() if val else ""
+    if not s or s in ("-", ""):
+        return "TIDAK"
+    if "YA" in s:
+        return "YA"
+    if "TIDAK" in s:
+        return "TIDAK"
+    return s
