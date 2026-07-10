@@ -80,18 +80,52 @@ def to_int(val):
 
 
 def clean_health_value(val):
-    """Clean a health access survey value for storage.
+    """Normalize health access value to integer.
 
-    Numeric values (1.0, 2.0) -> int. Text values kept as-is. None -> 0.
+    Rules:
+      - None/empty -> 0
+      - Numeric -> int
+      - "TIDAK PERNAH" -> 0
+      - "Setiap Bulan" -> 12
+      - "Lebih dari 5 kali" / ">5" / "> 5" -> random 6-11
+      - Multi-part (comma-separated) -> max of resolved parts
+      - Unresolvable text -> 0
     """
     if val is None:
         return 0
+
     if isinstance(val, (int, float)):
         return int(val)
+
     s = str(val).strip()
     if s == "":
         return 0
-    return s
+
+    parts = [p.strip() for p in s.split(",")]
+    resolved = []
+
+    for p in parts:
+        if not p:
+            continue
+        pu = p.upper()
+
+        if "TIDAK PERNAH" in pu:
+            resolved.append(0)
+        elif "SETIAP BULAN" in pu:
+            resolved.append(12)
+        elif "LEBIH DARI 5" in pu or ">5" in pu or "> 5" in pu:
+            import random
+            resolved.append(random.randint(6, 11))
+        else:
+            try:
+                resolved.append(int(float(p)))
+            except (ValueError, TypeError):
+                pass
+
+    if not resolved:
+        return 0
+
+    return max(resolved)
 
 
 def normalize_jamkes(val):
@@ -259,9 +293,7 @@ def clean_email(val):
     if val is None:
         return None
     if isinstance(val, (int, float)):
-        if val <= 1:
-            return None
-        return str(int(val))
+        val = str(int(val))
     s = str(val).strip()
     if s == "" or s in ("0", "1", "0.0", "1.0"):
         return None
@@ -316,7 +348,10 @@ def name_key(n):
     """Normalize a name for case-insensitive comparison."""
     if n is None:
         return ""
-    return re.sub(r"\s+", " ", str(n).strip()).lower()
+    s = str(n).strip()
+    s = re.sub(r"\s*\.\s*", ".", s)
+    s = re.sub(r"\s+", " ", s).lower()
+    return s
 
 
 def is_valid_nik(nik):
@@ -508,3 +543,20 @@ def normalize_bantuan(val):
     if "TIDAK" in s:
         return "TIDAK"
     return s
+
+
+def repair_kk_from_nik(kk, nik_kk, bip_by_nik, bip_by_kk):
+    """Repair an invalid KK by looking up the NIK Kepala Keluarga in BIP.
+
+    Returns (repaired_kk, note) or (None, note) if repair failed.
+    """
+    if is_valid_nik(kk) and str(kk) in bip_by_kk:
+        return kk, None
+
+    nik = clean_id(nik_kk)
+    if is_valid_nik(nik) and nik in bip_by_nik:
+        bip_kk = bip_by_nik[nik].get("NO KK", "")
+        if is_valid_nik(bip_kk):
+            return bip_kk, "diperbaiki dari BIP via NIK KK"
+
+    return None, "KK tidak dapat diperbaiki (NIK KK tidak ditemukan di BIP)"

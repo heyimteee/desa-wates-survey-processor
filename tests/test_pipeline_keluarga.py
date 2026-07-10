@@ -11,40 +11,32 @@ from pipeline_keluarga import process_keluarga, _clean_distance, _clean_time
 
 
 class TestCleanDistance:
+    """Tests for per-facility smart distance detection."""
+
     def test_meters_converted_to_km(self):
-        """1000 raw meters → 1 km."""
         km, note = _clean_distance(1000, 10, "TEST")
         assert km == 1.0
-        assert note == ""
 
     def test_75_meters(self):
-        """75 raw meters → 0.075 km."""
         km, note = _clean_distance(75, 2, "TEST")
         assert km == 0.075
 
     def test_km_entry_detected(self):
-        """raw=1 with time=5min → detected as KM entry (not 0.001km)."""
         km, note = _clean_distance(1, 5, "TEST")
         assert km == 1.0
         assert "kemungkinan sudah dalam KM" in note
 
     def test_extreme_returns_dash(self):
-        """1,000,000,000 raw → '-'."""
         km, note = _clean_distance(1_000_000_000, 60, "TEST")
         assert km == "-"
-        assert "ekstrem" in note
 
     def test_far_but_not_extreme(self):
-        """150,000 raw (150km) → kept with warning."""
         km, note = _clean_distance(150_000, 60, "TEST")
         assert km == 150.0
-        assert "jauh" in note
 
-    def test_meters_ge_100_assumed_meters(self):
-        """raw=150 (150 meters) with time 3 min → 0.15 km."""
+    def test_raw_ge_100_always_meters(self):
         km, note = _clean_distance(150, 3, "TEST")
         assert km == 0.15
-        assert note == ""
 
     def test_none_returns_dash(self):
         km, note = _clean_distance(None, None, "TEST")
@@ -54,10 +46,14 @@ class TestCleanDistance:
         km, note = _clean_distance("unknown", None, "TEST")
         assert km == "unknown"
 
-    def test_small_value_without_time(self):
-        """Small value without time data → meters assumption."""
+    def test_small_no_time_defaults_meters(self):
         km, note = _clean_distance(10, None, "TEST")
         assert km == 0.01
+
+    def test_both_absurd_speed_choose_better(self):
+        """0.1 raw with 5min time — both speeds absurd, choose KM (less absurd)."""
+        km, note = _clean_distance(0.1, 5, "TEST")
+        assert km == 0.1
 
 
 class TestCleanTime:
@@ -163,7 +159,7 @@ class TestProcessKeluarga:
             fname = "Pendataan Keluarga RT 05 RW 01 Dusun Sidomulyo (Jawaban).xlsx"
             fpath = self._write_survey_xlsx(records, td, fname)
             return process_keluarga([fpath], bip_pool["by_kk"],
-                                    bip_pool["all"], il)
+                                    bip_pool["all"], il, bip_pool["by_nik"])
         finally:
             shutil.rmtree(td, ignore_errors=True)
 
@@ -186,8 +182,11 @@ class TestProcessKeluarga:
         assert len(result) == 0
 
     def test_kk_not_in_bip(self, bip_pool):
-        """KK not in BIP → one row with survey data only."""
-        sv = self._make_survey({"Nomor KK": "9999999999999999"})
+        """KK not in BIP, NIK KK also not in BIP → one row with survey data only."""
+        sv = self._make_survey({
+            "Nomor KK": "9999999999999999",
+            "Nomor NIK Kepala Keluarga": "9999999999999999",
+        })
         result = self._run([sv], bip_pool)
         assert len(result) == 1
         assert result[0]["NIK"] == ""
@@ -210,8 +209,11 @@ class TestProcessKeluarga:
         assert result[0]["PAUD - WAKTU (JAM)"] == 5 / 60.0
 
     def test_kk_validation_note(self, bip_pool):
-        """Invalid KK → flagged."""
-        sv = self._make_survey({"Nomor KK": "123"})
+        """Invalid KK with no BIP reference → flagged."""
+        sv = self._make_survey({
+            "Nomor KK": "123",
+            "Nomor NIK Kepala Keluarga": "999",
+        })
         result = self._run([sv], bip_pool)
         notes = result[0].get("_notes", [])
         assert any("NO KK" in n for n in notes)

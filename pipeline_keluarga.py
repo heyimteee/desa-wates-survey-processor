@@ -3,10 +3,11 @@
 
 import os
 
-from survey_loader import load_keluarga_survey
+from survey_loader import load_keluarga_survey, parse_survey_filename
 from utils import (
     clean_id, to_upper, to_int, to_text, normalize_yes_no,
     is_valid_nik, repair_nik_kk_from_bip, normalize_bantuan, name_key,
+    repair_kk_from_nik,
 )
 
 
@@ -82,9 +83,9 @@ def _clean_distance(raw_dist, raw_time, label):
     """Parse distance, detecting units from time/speed ratio.
 
     Strategy:
-      - raw >= 100: assume meters → convert ÷1000
-      - raw < 100: check speed. If meters→km gives absurd speed
-        but keeping-as-km gives reasonable speed, use KM assumption.
+      - raw >= 100: always meters → convert ÷1000
+      - raw < 100: check speed. Choose the unit that gives more
+        reasonable speed (closer to normal range).
     """
     val = _try_parse_numeric(raw_dist)
     if val is None:
@@ -98,37 +99,32 @@ def _clean_distance(raw_dist, raw_time, label):
 
     km_m = val / 1000.0
 
-    if time_h is None or time_h == 0:
-        if km_m > DISTANCE_MAX_KM:
-            return "-", f"{label}: ekstrem ({km_m:,.0f} km — kemungkinan salah input)"
-        if km_m > 100:
-            return km_m, f"{label}: jauh ({km_m:,.0f} km — periksa manual)"
-        return km_m, ""
-
     if val >= 100:
         if km_m > DISTANCE_MAX_KM:
-            return "-", f"{label}: ekstrem ({km_m:,.0f} km — kemungkinan salah input)"
+            return "-", f"{label}: ekstrem ({km_m:,.0f} km)"
         if km_m > 100:
-            return km_m, f"{label}: jauh ({km_m:,.0f} km — periksa manual)"
-        if km_m < 0.01:
-            return km_m, f"{label}: sangat dekat ({km_m:.3f} km — periksa satuan)"
+            return km_m, f"{label}: jauh ({km_m:,.0f} km)"
+        return km_m, ""
+
+    if time_h is None or time_h == 0:
         return km_m, ""
 
     speed_m = km_m / time_h
     speed_km = val / time_h
 
-    if speed_m >= 2.0:
-        if km_m < 0.01:
-            return km_m, f"{label}: sangat dekat ({km_m:.3f} km — periksa satuan)"
+    if 2.0 <= speed_m <= 80.0:
         return km_m, ""
 
     if 2.0 <= speed_km <= 80.0:
         return val, f"{label}: data kemungkinan sudah dalam KM"
 
-    if speed_m < 2.0:
-        return km_m, f"{label}: sangat dekat ({km_m:.3f} km — periksa satuan)"
+    if speed_km > speed_m and speed_km <= 200.0:
+        return val, f"{label}: data kemungkinan sudah dalam KM"
 
-    return km_m, ""
+    if speed_m <= 200.0:
+        return km_m, ""
+
+    return "-", f"{label}: kecepatan ekstrem"
 
 
 def _parse_time(val):
@@ -188,6 +184,33 @@ def _is_corrupt_row(survey_rec):
     return kk == "1" and nik_kk == "1" and nama in ("1", "1.0", "0", "0.0")
 
 
+def _sanitize_id(val):
+    """Replace sentinel '1'/'1.0' with empty string."""
+    if val in ("1", "1.0", "0", "0.0"):
+        return ""
+    return val
+
+
+def _sanitize_name(val):
+    """Replace sentinel '1'/'1.0'/'0'/'0.0' with dash."""
+    if val is None:
+        return None
+    s = str(val).strip().upper()
+    if s in ("1", "1.0", "0", "0.0"):
+        return "-"
+    return val
+
+
+def _derive_alamat(survey_rec):
+    """Derive standardized ALAMAT from Dusun in survey filename."""
+    filename = survey_rec.get("_source_file", "")
+    info = parse_survey_filename(filename)
+    dusun = (info.get("dusun") or "").upper()
+    if dusun:
+        return "DSN " + dusun
+    return "-"
+
+
 def _build_keluarga_record(member, survey_rec, logger):
     """Build a single KELUARGA output record from BIP member + survey data.
 
@@ -201,10 +224,10 @@ def _build_keluarga_record(member, survey_rec, logger):
     """
     out = {}
 
-    out["NO KK"] = clean_id(member.get("NO KK"))
-    out["NIK"] = clean_id(member.get("NIK"))
-    out["NAMA"] = to_upper(member.get("NAMA LENGKAP"))
-    out["ALAMAT"] = to_upper(member.get("ALAMAT"))
+    out["NO KK"] = _sanitize_id(clean_id(member.get("NO KK")))
+    out["NIK"] = _sanitize_id(clean_id(member.get("NIK")))
+    out["NAMA"] = _sanitize_name(to_upper(member.get("NAMA LENGKAP")))
+    out["ALAMAT"] = _derive_alamat(survey_rec)
 
     out["NO. HP"] = "-"
     out["NO. Telpon Rumah"] = "-"
@@ -390,7 +413,7 @@ def _build_keluarga_output(member, survey_rec, logger):
     return out
 
 
-def process_keluarga(survey_files, bip_by_kk, bip_all, logger):
+def process_keluarga(survey_files, bip_by_kk, bip_all, logger, bip_by_nik=None):
     """Process KELUARGA survey files into template-formatted records.
 
     Expands household-level survey data to individual-level output:
@@ -420,6 +443,20 @@ def process_keluarga(survey_files, bip_by_kk, bip_all, logger):
             continue
 
         kk = clean_id(rec.get("Nomor KK"))
+        if kk in ("1", "1.0", "0", "0.0"):
+            kk = ""
+
+        nik_kk = clean_id(rec.get("Nomor NIK Kepala Keluarga"))
+        if nik_kk in ("1", "1.0", "0", "0.0"):
+            nik_kk = ""
+
+        if not is_valid_nik(kk) or str(kk) not in bip_by_kk:
+            repaired, kk_note = repair_kk_from_nik(
+                kk, nik_kk, bip_by_nik, bip_by_kk)
+            if repaired:
+                rec["_kk_repaired"] = True
+                rec["_kk_note"] = "NO KK: " + kk_note
+                kk = repaired
         if not kk:
             continue
         if kk in seen_kk:

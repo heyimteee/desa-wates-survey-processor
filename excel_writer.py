@@ -39,9 +39,14 @@ def write_individu_output(records, template_path, output_path, logger):
     for row_idx, rec in enumerate(records, 2):
         for col_idx, h in enumerate(headers, 1):
             val = rec.get(h)
-            if h.startswith("_"):
-                continue
             cell = ws.cell(row_idx, col_idx)
+
+            if h == "Action":
+                if val:
+                    cell.value = str(val)
+                continue
+            elif h.startswith("_"):
+                continue
 
             if h in TEXT_COLUMNS_INDIVIDU:
                 if val is not None and val != "":
@@ -125,7 +130,8 @@ def write_keluarga_output(records, template_path, output_path, logger):
                     cell.value = val if val is not None else "-"
             elif int_pattern.search(h):
                 if isinstance(val, (int, float)):
-                    cell.value = val
+                    cell.value = round(val, 2)
+                    cell.number_format = "0.00"
                 elif val is not None and val != "-":
                     cell.value = val
                 else:

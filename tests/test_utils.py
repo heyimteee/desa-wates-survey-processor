@@ -177,17 +177,52 @@ class TestCleanHealthValue:
     def test_float_to_int(self):
         assert clean_health_value(4.0) == 4
 
-    def test_tidak_pernah_preserved(self):
-        assert clean_health_value("TIDAK PERNAH") == "TIDAK PERNAH"
+    def test_tidak_pernah_returns_zero(self):
+        assert clean_health_value("TIDAK PERNAH") == 0
 
-    def test_lebih_dari_5_preserved(self):
-        assert clean_health_value("Lebih dari 5 kali") == "Lebih dari 5 kali"
+    def test_setiap_bulan_returns_12(self):
+        assert clean_health_value("Setiap Bulan") == 12
+
+    def test_lebih_dari_5_random(self):
+        import random
+        random.seed(42)
+        v = clean_health_value("Lebih dari 5 kali")
+        assert 6 <= v <= 11
+
+    def test_lebih_dari_5_deterministic(self):
+        import random
+        random.seed(42)
+        v1 = clean_health_value("Lebih dari 5 kali")
+        random.seed(42)
+        v2 = clean_health_value("Lebih dari 5 kali")
+        assert v1 == v2  # same seed → same value
 
     def test_empty_returns_zero(self):
         assert clean_health_value("") == 0
 
-    def test_contradictory_preserved(self):
-        assert clean_health_value("TIDAK PERNAH, 1") == "TIDAK PERNAH, 1"
+    def test_mixed_takes_max(self):
+        """TIDAK PERNAH=0, 1 = 1 — max = 1."""
+        assert clean_health_value("TIDAK PERNAH, 1") == 1
+
+    def test_multi_numeric_takes_max(self):
+        """2 and 3 → max = 3."""
+        assert clean_health_value("2, 3") == 3
+
+    def test_mixed_text_monthly(self):
+        """TIDAK PERNAH=0, Setiap Bulan=12 — max = 12."""
+        assert clean_health_value("TIDAK PERNAH, Setiap Bulan") == 12
+
+    def test_pure_text_no_numbers_returns_zero(self):
+        assert clean_health_value("abcd") == 0
+
+    def test_spaces_stripped(self):
+        assert clean_health_value("  3  ") == 3
+
+    def test_more_than_5_variants(self):
+        """Various Lebih dari 5 patterns."""
+        assert 6 <= clean_health_value("lebih dari 5 kali") <= 11
+        assert 6 <= clean_health_value("> 5") <= 11
+        assert 6 <= clean_health_value(">5") <= 11
 
 
 # ======================================================================
@@ -317,6 +352,13 @@ class TestCleanEmail:
 
     def test_none(self):
         assert clean_email(None) is None
+
+    def test_float_not_sentinel_is_none(self):
+        """Float > 1, like 2.0, should be None (cant be a valid email)."""
+        assert clean_email(2.0) is None
+
+    def test_int_not_sentinel_is_none(self):
+        assert clean_email(2) is None
 
 
 # ======================================================================

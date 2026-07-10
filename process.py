@@ -106,7 +106,7 @@ def main():
             output_path = os.path.join(OUTPUT_DIR, output_name)
 
             print(f"      File: {fname}")
-            records = process_keluarga([fpath], bip_by_kk, bip_all, logger)
+            records = process_keluarga([fpath], bip_by_kk, bip_all, logger, bip_by_nik)
             print(f"        Output: {len(records)} rows")
             write_keluarga_output(records, TEMPLATE_KELUARGA,
                                   output_path, logger)

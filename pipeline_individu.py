@@ -10,7 +10,7 @@ from utils import (
     clean_health_value, normalize_jamkes, normalize_yes_no,
     normalize_pendidikan, derive_pendidikan_years, is_sentinel,
     is_valid_nik, repair_nik_by_name, classify_nik_duplicate,
-    detect_health_anomaly, name_key,
+    name_key,
 )
 
 
@@ -41,6 +41,8 @@ def process_individu(survey_files, bip_by_nik, bip_by_name, logger):
 
     for rec in all_survey:
         nik = clean_id(rec.get("NIK"))
+        if nik in ("1", "1.0", "0", "0.0"):
+            nik = ""
         rec.setdefault("_validation_notes", [])
         rec.setdefault("_sort_priority", 0)
         rec.setdefault("_nik_category", "")
@@ -130,6 +132,8 @@ def process_individu(survey_files, bip_by_nik, bip_by_name, logger):
     for rec in all_records:
         nik = rec["NIK"]
         nama = to_upper(rec.get("Nama")) or ""
+        if nama in ("1", "1.0", "0", "0.0"):
+            nama = "-"
 
         bip = bip_by_nik.get(nik) if nik else None
         if nik and not bip:
@@ -254,12 +258,7 @@ def process_individu(survey_files, bip_by_nik, bip_by_name, logger):
         ]
 
         for survey_col, output_col in health_facilities:
-            raw_val = rec.get(survey_col)
-            cleaned = clean_health_value(raw_val)
-            is_anom, atype, msg = detect_health_anomaly(raw_val)
-            if is_anom:
-                rec["_validation_notes"].append("{}: {}".format(output_col, msg))
-            out[output_col] = cleaned
+            out[output_col] = clean_health_value(rec.get(survey_col))
 
         out["RUMAH SAKIT BERSALIN"] = 0
         out["PUSKESMAS TANPA RAWAT INAP"] = 0
@@ -330,18 +329,14 @@ def process_individu(survey_files, bip_by_nik, bip_by_name, logger):
 
     for idx, rec in enumerate(output_records, 1):
         rec["No"] = idx
-        category = rec.get("_nik_category", "")
-        notes = rec.get("_validation_notes", [])
-        if category == "PERLU DICEK":
-            rec["Action"] = "Cek Manual"
-        elif category == "NIK TIDAK VALID":
-            rec["Action"] = "Perbaiki"
-        elif category == "NIK KOSONG":
-            rec["Action"] = "Lengkapi"
-        elif notes:
-            rec["Action"] = "Periksa"
-        else:
-            rec["Action"] = "Auto"
+        rec["Action"] = ""
+
+    if output_records and survey_files:
+        info = parse_survey_filename(os.path.basename(survey_files[0]))
+        rw = info.get("rw") or "??"
+        output_records[0]["Action"] = "RW {}".format(rw.zfill(2) if rw.isdigit() else rw)
+        for rec in output_records[1:]:
+            rec["Action"] = ""
 
     for rec in output_records:
         notes = rec.get("_validation_notes", [])

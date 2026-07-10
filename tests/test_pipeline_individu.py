@@ -147,19 +147,17 @@ class TestProcessIndividu:
         assert result[0]["Pekerjaan Utama"] == "PETANI"
 
     def test_action_column(self, bip_pool):
-        """Action column set based on validation state."""
+        """Action column — first row RW, others empty."""
         result = self._run([self._make_survey()], bip_pool)
-        assert result[0]["Action"] in ("Auto", "Periksa", "Cek Manual",
-                                        "Perbaiki", "Lengkapi")
+        assert result[0]["Action"] == "RW 01"
 
     def test_phone_clean_in_output(self, bip_pool):
         """Phone values are cleaned in output."""
         result = self._run([self._make_survey({"Nomor HP/Wa": "+628123456789"})], bip_pool)
         assert result[0]["No. Hp"] == "08123456789"
 
-    def test_health_anomaly_detected(self, bip_pool):
-        """Health contradiction values are flagged."""
+    def test_health_normalized_to_int(self, bip_pool):
+        """Health text values are normalized to integers."""
         result = self._run([self._make_survey({
             "Akses Kesehatan [RUMAH SAKIT]": "TIDAK PERNAH, 1"})], bip_pool)
-        notes = result[0].get("_validation_notes", [])
-        assert any("kontradiksi" in n for n in notes)
+        assert result[0]["RUMAH SAKIT"] == 1  # max(0, 1) = 1
